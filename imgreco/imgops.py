@@ -5,6 +5,8 @@ import numpy as np
 from PIL import Image
 
 
+
+
 def enhance_contrast(img, lower=90, upper=None):
     img = np.asarray(img, dtype=np.uint8)
     if upper is None:
@@ -21,9 +23,9 @@ def image_threshold_mat2img(mat, threshold=127):
     :param threshold: negative value means inverted output
     """
     if threshold < 0:
-        resultmat = mat < -threshold
+        resultmat = mat <= -threshold
     else:
-        resultmat = mat > threshold
+        resultmat = mat >= threshold
     lut = np.zeros(256, dtype=np.uint8)
     lut[1:] = 255
     return Image.fromarray(lut[resultmat.astype(np.uint8)], 'L').convert('1')
@@ -40,6 +42,8 @@ def image_threshold(image, threshold=127):
 
 
 def crop_blackedge(numimg, value_threshold=127):
+    if numimg.width == 0 or numimg.height == 0:
+        return None
     thimg = image_threshold(numimg, value_threshold)
     return numimg.crop(thimg.getbbox())
 
@@ -97,12 +101,12 @@ def scalecrop(img, left, top, right, bottom):
 
 
 def compare_mse(mat1, mat2):
+    """max 65025 (255**2) for 8bpc image"""
     mat1 = np.asarray(mat1)
     mat2 = np.asarray(mat2)
     assert (mat1.shape == mat2.shape)
     diff = mat1.astype(np.float32) - mat2.astype(np.float32)
-    se = np.sum(diff * diff)
-    mse = se / reduce(lambda a, b: a * b, mat1.shape)
+    mse = np.mean(diff * diff)
     return mse
 
 
@@ -127,3 +131,22 @@ def uniform_size(img1, img2):
     elif img1.width != img2.width:
         img1 = img1.resize(img2.size, Image.BILINEAR)
     return (img1, img2)
+
+
+def invert_color(img):
+    mat = np.asarray(img)
+    lut = np.linspace(255, 0, 256, dtype=np.uint8)
+    resultmat = lut[mat]
+    return Image.fromarray(resultmat, img.mode)
+
+
+def match_template(img, template, method=cv.TM_CCOEFF_NORMED):
+    templatemat = np.asarray(template)
+    mtresult = cv.matchTemplate(np.asarray(img), templatemat, method)
+    if method == cv.TM_SQDIFF_NORMED or method == cv.TM_SQDIFF:
+        selector = np.argmin
+    else:
+        selector = np.argmax
+    maxidx = np.unravel_index(selector(mtresult), mtresult.shape)
+    y, x = maxidx
+    return (x + templatemat.shape[1] / 2, y + templatemat.shape[0] / 2), mtresult[maxidx]

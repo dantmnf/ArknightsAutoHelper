@@ -2,12 +2,12 @@ import cv2 as cv
 import numpy as np
 from PIL import Image
 
+from util.richlog import get_logger
 from . import imgops
 from . import resources
 from . import util
 
-LOGFILE = 'log/common.html'
-
+logger = get_logger(__name__)
 
 def check_get_item_popup(img):
     vw, vh = util.get_vwvh(img.size)
@@ -17,6 +17,8 @@ def check_get_item_popup(img):
     icon1, icon2 = imgops.uniform_size(icon1, icon2)
     mse = imgops.compare_mse(np.asarray(icon1), np.asarray(icon2))
     # print(mse, icon1.size)
+    logger.logimage(icon1)
+    logger.logtext('mse=%f' % mse)
     return mse < 2000
 
 
@@ -32,7 +34,8 @@ def check_nav_button(img):
 
     icon1, icon2 = imgops.uniform_size(icon1, icon2)
     mse = imgops.compare_mse(np.asarray(icon1), np.asarray(icon2))
-    print(mse)
+    logger.logimage(icon1)
+    logger.logtext('mse=%f' % mse)
     return mse < 200
 
 
@@ -47,8 +50,10 @@ def check_setting_scene(img):
     icon2 = resources.load_image_cached('common/settingback.png', 'RGB')
 
     icon1, icon2 = imgops.uniform_size(icon1, icon2)
-    return imgops.compare_mse(np.asarray(icon1), np.asarray(icon2)) < 200
-
+    mse = imgops.compare_mse(np.asarray(icon1), np.asarray(icon2))
+    logger.logimage(icon1)
+    logger.logtext('mse=%f' % mse)
+    return mse < 200
 
 def get_setting_back_rect(viewport):
     vw, vh = util.get_vwvh(viewport)
@@ -70,6 +75,46 @@ def find_close_button(img):
     rect = np.array((x, y, x + template.width, y + template.height)) * scale
     return tuple(rect.astype(np.int32)), mtresult[maxidx]
 
+def check_dialog(img):
+    # vw, vh = util.get_vwvh(img.size)
+    # buttons = img.crop((0, 64.861*vh, 100.000*vw, 75.417*vh)).convert('RGB')
+    oldheight = img.height
+    img = img.resize((1280, 720), Image.BILINEAR).convert('RGB').crop((0, 360, 1280, 640))
+    yesno = resources.load_image_cached('common/dialog_2btn.png', 'RGB')
+    ok = resources.load_image_cached('common/dialog_1btn.png', 'RGB')
+    pt1, coef1 = imgops.match_template(img, yesno)
+    pt2, coef2 = imgops.match_template(img, ok)
+    # print(pt1, coef1, pt2, coef2)
+    if max(coef1, coef2) > 0.5:
+        return ('yesno', (pt1[1] + 360)/720 * oldheight) if coef1 > coef2 else ('ok', (pt2[1] + 360)/720 * oldheight)
+    return None, None
+
+def recognize_dialog(img):
+    dlgtype, _ = check_dialog(img)
+    if dlgtype is None:
+        return None, None
+    from . import ocr
+    vw, vh = util.get_vwvh(img.size)
+    content = img.crop((0, 22.222*vh, 100.000*vw, 64.167*vh)).convert('L')
+    return dlgtype, ocr.acquire_engine_global_cached('zh-cn').recognize(content, int(vh * 20))
+
+def get_dialog_left_button_rect(img):
+    vw, vh = util.get_vwvh(img)
+    dlgtype, y = check_dialog(img)
+    assert dlgtype == 'yesno'
+    return (0, y-4*vh, 50*vw, y+4*vh)
+
+def get_dialog_right_button_rect(img):
+    vw, vh = util.get_vwvh(img)
+    dlgtype, y = check_dialog(img)
+    assert dlgtype == 'yesno'
+    return (50*vw, y-4*vh, 100*vw, y+4*vh)
+
+def get_dialog_ok_button_rect(img):
+    vw, vh = util.get_vwvh(img)
+    dlgtype, y = check_dialog(img)
+    assert dlgtype == 'ok'
+    return (25*vw, y-4*vh, 75*vw, y+4*vh)
 
 if __name__ == "__main__":
     import sys

@@ -10,22 +10,41 @@ from collections import Mapping
 
 import ruamel.yaml
 
-from .version import version
-
 yaml = ruamel.yaml.YAML()
+bundled = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+if bundled:
+    root = sys._MEIPASS
+    CONFIG_PATH = os.path.join(root, 'config')
+else:
+    CONFIG_PATH = os.path.realpath(os.path.dirname(__file__))
+    root = os.path.realpath(os.path.join(CONFIG_PATH, '..'))
 
-CONFIG_PATH = os.path.realpath(os.path.dirname(__file__))
-root = os.path.realpath(os.path.join(CONFIG_PATH, '..'))
+try:
+    if not bundled and os.path.exists(os.path.join(root, '.git')):
+        from .scm_version import version
+    else:
+        from .release_info import version
+except ImportError:
+    version = 'UNKNOWN'
+
+
 ADB_ROOT = os.path.join(root, 'ADB', sys.platform)
-SCREEN_SHOOT_SAVE_PATH = os.path.join(root, 'screen_shoot')
-STORAGE_PATH = os.path.join(root, 'storage')
+SCREEN_SHOOT_SAVE_PATH = os.path.join(root, 'screenshot')
 config_file = os.path.join(CONFIG_PATH, 'config.yaml')
 config_template = os.path.join(CONFIG_PATH, 'config-template.yaml')
 logging_config_file = os.path.join(CONFIG_PATH, 'logging.yaml')
 logs = os.path.join(root, 'log')
+use_archived_resources = not os.path.isdir(os.path.join(root, 'resources'))
+if use_archived_resources:
+    resource_archive = os.path.join(root, 'resources.zip')
+    sys.path.append(resource_archive)
+    resource_root = os.path.join(root, 'resources.zip', 'resources')
+else:
+    resource_archive = None
+    resource_root = os.path.join(root, 'resources')
+
 if not os.path.exists(logs):
     os.mkdir(logs)
-logfile = os.path.join(root, 'log', 'ArknightsAutoHelper.log')
 
 dirty = False
 
@@ -34,6 +53,30 @@ if not os.path.exists(config_file):
 
 with open(config_file, 'r', encoding='utf-8') as f:
     _ydoc = yaml.load(f)
+
+
+def get_instance_id():
+    i = 0
+    while True:
+        try:
+            filename = os.path.join(logs, 'ArknightsAutoHelper.%d.lock' % i)
+            f = open(filename, 'a+b')
+            f.seek(0)
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 114514)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            import atexit
+            def fini(lockfile, lockfilename):
+                if lockfile is not None:
+                    lockfile.close()
+                    os.unlink(lockfilename)
+            atexit.register(fini, f, filename)
+            return i
+        except OSError:
+            i += 1
 
 
 def _set_dirty():
@@ -114,6 +157,14 @@ SECRET_KEY = get('ocr/baidu_api/app_secret', 'AAAZZZ')
 
 reporter = get('reporting/enabled', False)
 
+
+instanceid = get_instance_id()
+if instanceid == 0:
+    logfile = os.path.join(root, 'log', 'ArknightsAutoHelper.log')
+else:
+    logfile = os.path.join(root, 'log', 'ArknightsAutoHelper.%d.log' % instanceid)
+
 with open(logging_config_file, 'r', encoding='utf-8') as f:
     logging.config.dictConfig(yaml.load(f))
 del f
+logging.debug('ArknightsAutoHelper version %s', version)

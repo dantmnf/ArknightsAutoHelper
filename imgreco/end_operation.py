@@ -3,14 +3,14 @@ import sys
 import numpy as np
 from PIL import Image
 
-from richlog import get_logger
+from util.richlog import get_logger
 from . import imgops
 from . import item
 from . import minireco
 from . import resources
 from . import util
 
-LOGFILE = 'log/drop-recognition.html'
+logger = get_logger(__name__)
 
 
 class RecognizeSession:
@@ -52,7 +52,6 @@ def _load_data():
 
 
 def tell_group(groupimg, session, bartop, barbottom, ):
-    logger = get_logger(LOGFILE)
     logger.logimage(groupimg)
     grouptext = groupimg.crop((0, barbottom, groupimg.width, groupimg.height))
 
@@ -91,10 +90,12 @@ def tell_group(groupimg, session, bartop, barbottom, ):
         return (groupname, [('(家具)', 1)])
 
     vw, vh = session.vw, session.vh
-    itemcount = roundint(groupimg.width / (20.370 * vh))
+    itemwidth = 20.370 * vh
+    itemcount = roundint(groupimg.width / itemwidth)
+    logger.logtext('group has %d items' % itemcount)
     result = []
     for i in range(itemcount):
-        itemimg = groupimg.crop((20.370 * vh * i, 0.000 * vh, 40.741 * vh, 18.981 * vh))
+        itemimg = groupimg.crop((itemwidth * i, 0.000 * vh, itemwidth * (i+1), 18.981 * vh))
         # x1, _, x2, _ = (0.093*vh, 0.000*vh, 19.074*vh, 18.981*vh)
         itemimg = itemimg.crop((0.093 * vh, 0, 19.074 * vh, itemimg.height))
         result.append(item.tell_item(itemimg, session))
@@ -102,10 +103,11 @@ def tell_group(groupimg, session, bartop, barbottom, ):
 
 
 def find_jumping(ary, threshold):
-    logger = get_logger(LOGFILE)
     ary = np.array(ary, dtype=np.int16)
     diffs = np.diff(ary)
     shit = [x for x in enumerate(diffs) if abs(x[1]) >= threshold]
+    if not shit:
+        return []
     groups = [[shit[0]]]
     for x in shit[1:]:
         lastgroup = groups[-1]
@@ -131,19 +133,19 @@ def roundint(x):
 def check_level_up_popup(img):
     vw, vh = util.get_vwvh(img.size)
 
-    ap_recovered_img = img.crop((50 * vw + 8.056 * vh, 46.574 * vh, 50 * vw + 24.907 * vh, 51.296 * vh))  # 理智已恢复
-    ap_recovered_img = imgops.enhance_contrast(ap_recovered_img, 100, 225)
-    ap_recovered_text = recozh.recognize(ap_recovered_img)
-    return '理智' in ap_recovered_text
+    lvl_up_img = img.crop((50*vw-48.796*vh, 47.685*vh, 50*vw-23.148*vh, 56.019*vh)).convert('L')  # 等级提升
+    lvl_up_img = imgops.enhance_contrast(lvl_up_img, 216, 255)
+    lvl_up_text = recozh.recognize(lvl_up_img)
+    return minireco.check_charseq(lvl_up_text, '提升')
 
 
 def check_end_operation(img):
     vw, vh = util.get_vwvh(img.size)
-
-    operation_end_img = img.crop((4.722 * vh, 80.278 * vh, 56.389 * vh, 93.889 * vh))
-    operation_end_img = imgops.image_threshold(operation_end_img, 225).convert('L')
-    operation_end_img = imgops.scale_to_height(operation_end_img, 24)
-    return '结束' in recozh.recognize(operation_end_img)
+    template = resources.load_image_cached('end_operation/end.png', 'L')
+    operation_end_img = img.crop((4.722 * vh, 80.278 * vh, 56.389 * vh, 93.889 * vh)).convert('L')
+    operation_end_img = imgops.enhance_contrast(operation_end_img, 225, 255)
+    mse = imgops.compare_mse(*imgops.uniform_size(template, operation_end_img))
+    return mse < 6502
 
 
 def get_dismiss_level_up_popup_rect(viewport):
@@ -158,13 +160,12 @@ def recognize(im):
     import time
     t0 = time.monotonic()
     vw, vh = util.get_vwvh(im.size)
-    logger = get_logger(LOGFILE)
 
     lower = im.crop((0, 61.111 * vh, 100 * vw, 100 * vh))
     logger.logimage(lower)
 
     operation_id = lower.crop((0, 4.444 * vh, 23.611 * vh, 11.388 * vh)).convert('L')
-    logger.logimage(operation_id)
+    # logger.logimage(operation_id)
     operation_id = imgops.enhance_contrast(imgops.crop_blackedge(operation_id), 80, 220)
     logger.logimage(operation_id)
     operation_id_str = reco_novecento_bold.recognize(operation_id).upper()
@@ -179,10 +180,17 @@ def recognize(im):
     logger.logimage(stars)
     stars_status = tell_stars(stars)
 
-    level = lower.crop((63.148 * vh, 4.444 * vh, 73.333 * vh, 8.611 * vh))
-    logger.logimage(level)
-    exp = lower.crop((76.852 * vh, 5.556 * vh, 94.074 * vh, 7.963 * vh))
-    logger.logimage(exp)
+    # level = lower.crop((63.148 * vh, 4.444 * vh, 73.333 * vh, 8.611 * vh))
+    # logger.logimage(level)
+    # exp = lower.crop((76.852 * vh, 5.556 * vh, 94.074 * vh, 7.963 * vh))
+    # logger.logimage(exp)
+
+    recoresult = {
+        'operation': operation_id_str,
+        'stars': stars_status,
+        'items': [],
+        'low_confidence': False
+    }
 
     items = lower.crop((68.241 * vh, 10.926 * vh, lower.width, 35.000 * vh))
     logger.logimage(items)
@@ -190,7 +198,13 @@ def recognize(im):
     x, y = 6.667 * vh, 18.519 * vh
     linedet = items.crop((x, y, x + 1, items.height)).convert('L')
     d = np.asarray(linedet)
-    linetop, linebottom, *_ = find_jumping(d.reshape(linedet.height), 32)
+    linedet = find_jumping(d.reshape(linedet.height), 64)
+    if len(linedet) >= 2:
+        linetop, linebottom, *_ = linedet
+    else:
+        logger.logtext('horizontal line detection failed')
+        recoresult['low_confidence'] = True
+        return recoresult
     linetop += y
     linebottom += y
 
@@ -201,8 +215,9 @@ def recognize(im):
     logger.logimage(grouping.resize((grouping.width, 16)))
 
     d = np.array(grouping, dtype=np.int16)[0]
-    points = [0, *find_jumping(d, 32)]
-    assert (len(points) % 2 == 0)
+    points = [0, *find_jumping(d, 64)]
+    if len(points) % 2 != 0:
+        raise RuntimeError('possibly incomplete item list')
     finalgroups = list(zip(*[iter(points)] * 2))  # each_slice(2)
     logger.logtext(repr(finalgroups))
 
@@ -215,20 +230,24 @@ def recognize(im):
     session.vh = vh
 
     for group in imggroups:
-        result = tell_group(group, session, linetop, linebottom)
-        session.recognized_groups.append(result[0])
-        items.append(result)
+        groupresult = tell_group(group, session, linetop, linebottom)
+        session.recognized_groups.append(groupresult[0])
+        items.append(groupresult)
 
     t1 = time.monotonic()
     if session.low_confidence:
         logger.logtext('LOW CONFIDENCE')
     logger.logtext('time elapsed: %f' % (t1 - t0))
-    return {
-        'operation': operation_id_str,
-        'stars': stars_status,
-        'items': items,
-        'low_confidence': session.low_confidence
-    }
+    recoresult['items'] = items
+    recoresult['low_confidence'] = recoresult['low_confidence'] or session.low_confidence
+    return recoresult
+
+
+
+def get_still_check_rect(viewport):
+    vw, vh = util.get_vwvh(viewport)
+    return (68.241 * vh, 61.111 * vh, 100 * vw, 100 * vh)
+
 
 
 _load_data()

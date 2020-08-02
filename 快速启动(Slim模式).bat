@@ -4,11 +4,12 @@ chcp>nul 2>nul 65001
 rem 切换至 ArknightsAutoHelper 所在位置
 :path
 cd>nul 2>nul /D %~dp0
+call venv\Scripts\activate.bat
 
 rem 主任务
 :aah_slim
 set /p slim="[94m[i] 输入预期战斗次数：[0m "
-python ArknightsShell.py -s -t slim:%slim%
+python akhelper.py quick %slim%
 
 rem 确认是否重新运行
 set /p choice="[94m[i] 输入 'y' 重新运行 | 任意键退出：[0m"
@@ -21,3 +22,4 @@ rem 结束进程
 echo [93m[!] 拜拜嘞您[1m
 TIMEOUT>nul 2>nul /T 3
 @exit
+

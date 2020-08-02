@@ -3,13 +3,13 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image
 
+from util.richlog import get_logger
 from . import imgops
 from . import minireco
 from . import resources
 from . import util
 
-LOGFILE = 'log/task.html'
-
+logger = get_logger(__name__)
 
 @lru_cache(1)
 def load_data():
@@ -47,6 +47,8 @@ def check_beginners_task(img):
 
     icon1, icon2 = imgops.uniform_size(icon1, icon2)
     mse = imgops.compare_mse(np.asarray(icon1), np.asarray(icon2))
+    logger.logimage(icon1)
+    logger.logtext('mse=%f' % mse)
     return mse < 150
 
 
